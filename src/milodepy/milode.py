@@ -456,6 +456,7 @@ def de_stat_neighbourhoods(
     group_to_compare = "stim",
     # subset_nhoods = stat_auc$Nhood[!is.na(stat_auc$auc)],
     n_jobs = 1,
+    layer = "counts",
 ):
     print(group_to_compare)
     def get_cells_in_nhoods(mdata, nhood_ids):
@@ -474,7 +475,7 @@ def de_stat_neighbourhoods(
     # get generator with all nhoods
 
     func = "sum"
-    layer = "counts"
+    # layer = "counts"
     
     all_nhoods = (get_cells_in_nhoods(mdata, nhood_ids = np.asarray([i])) for i in range(n_nhoods))
     aggregated_nhoods = (
