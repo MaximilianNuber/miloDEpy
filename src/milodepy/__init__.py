@@ -14,3 +14,8 @@ except PackageNotFoundError:  # pragma: no cover
     __version__ = "unknown"
 finally:
     del version, PackageNotFoundError
+
+from .milode import assign_neighbourhoods
+from .milode import filter_nhoods
+from .milode import da_nhoods
+from .milode import de_stat_neighbourhoods
