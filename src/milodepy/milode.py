@@ -509,8 +509,12 @@ def de_stat_neighbourhoods(
     from multiprocessing import Pool
     start = time.time()
     print(__name__)
-    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, group_to_compare) 
-                                                             for ad, design, group_to_compare in tqdm(args))
+    # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, group_to_compare) 
+    #                                                          for ad, design, group_to_compare in tqdm(args))
+
+    from multiprocessing import get_context
+    with get_context("spawn").Pool() as pool:
+        pval_df_list = pool.starmap(_run_edger, args)
 
     end = time.time()
     print("edger done in")
