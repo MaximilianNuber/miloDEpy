@@ -532,12 +532,13 @@ def de_stat_neighbourhoods(
     
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
-    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger_cached)(ad, design, contrast, model) 
-                                                             for ad, design, contrast, model in tqdm(args))
+    # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger_cached)(ad, design, contrast, model) 
+    #                                                          for ad, design, contrast, model in tqdm(args))
 
-    # from multiprocessing import get_context
-    # with get_context("spawn").Pool() as pool:
-    #     pval_df_list = pool.starmap(_run_edger, args)
+    print("start multiprocessing")
+    from multiprocessing import get_context
+    with get_context("spawn").Pool(n_jobs) as pool:
+        pval_df_list = pool.starmap(_run_edger_cached, tqdm(args))
     gene_order = mdata["rna"].var_names
     pval_by_nhood = pd.concat([df.set_index("variable").loc[gene_order, :][["p_value"]] for df in pval_df_list], axis = 1)
     FDR_across_genes = pd.concat([df.set_index("variable").loc[gene_order, :][["adj_p_value"]] for df in pval_df_list], axis = 1)
