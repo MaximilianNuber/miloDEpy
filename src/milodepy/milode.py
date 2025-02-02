@@ -429,10 +429,13 @@ def _run_edger(pdata, design, contrast, model):
     try:
         mod = model(pdata, design)
         mod.fit()
-        res = mod._test_single_contrast(**contrast)
+        res = mod._test_single_contrast(mod.contrast(**contrast))
         return res
     except:
         return _return_null_df(pdata)
+    
+from joblib import Memory
+import tempfile
     
 def get_weights(nhoods_x):
     """
@@ -468,6 +471,7 @@ def de_stat_neighbourhoods(
     n_jobs = 1,
     layer = "counts",
 ):
+    # print("cache function")
     assert contrast is not None
 
     
@@ -519,26 +523,37 @@ def de_stat_neighbourhoods(
         repeat(model)
     )
 
-    from multiprocessing import Pool
+    dirpath = tempfile.mkdtemp()
+    memory = Memory(dirpath, verbose = 0)
+    _run_edger_cached = memory.cache(_run_edger)
+
+    # from multiprocessing import Pool
     start = time.time()
-    print(__name__)
-    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
+    
+    # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
+    #                                                          for ad, design, contrast, model in tqdm(args))
+    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger_cached)(ad, design, contrast, model) 
                                                              for ad, design, contrast, model in tqdm(args))
 
     # from multiprocessing import get_context
     # with get_context("spawn").Pool() as pool:
     #     pval_df_list = pool.starmap(_run_edger, args)
+    gene_order = mdata["rna"].var_names
+    pval_by_nhood = pd.concat([df.set_index("variable").loc[gene_order, :][["p_value"]] for df in pval_df_list], axis = 1)
+    FDR_across_genes = pd.concat([df.set_index("variable").loc[gene_order, :][["adj_p_value"]] for df in pval_df_list], axis = 1)
+    logfc_nhoods = pd.concat([df.set_index("variable").loc[gene_order, :][["log_fc"]] for df in pval_df_list], axis = 1)
 
     end = time.time()
     print("edger done in")
     print(end-start)
     print("seconds")
-    return pval_df_list
+    return logfc_nhoods, pval_by_nhood, FDR_across_genes
+    # return pval_df_list
     # return pval_df_list
 
-    pval_by_nhood = pd.concat([df[["pvalue"]] for df in pval_df_list], axis = 1)
-    FDR_across_genes = pd.concat([df[["FDR"]] for df in pval_df_list], axis = 1)
-    logfc_nhoods = pd.concat([df[["log2FoldChange"]] for df in pval_df_list], axis = 1)
+    pval_by_nhood = pd.concat([df[["p_value"]] for df in pval_df_list], axis = 1)
+    FDR_across_genes = pd.concat([df[["adj_p_value"]] for df in pval_df_list], axis = 1)
+    logfc_nhoods = pd.concat([df[["log_fc"]] for df in pval_df_list], axis = 1)
     
     print("Calculating FDR across nhoods")
 
