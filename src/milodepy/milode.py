@@ -50,9 +50,10 @@ import time
 from tqdm import tqdm
 milo = pt.tl.Milo()
 
-from patsy import dmatrix
-from inmoose.edgepy import DGEList, glmLRT, topTags, glmQLFTest
+# from patsy import dmatrix
+# from inmoose.edgepy import DGEList, glmLRT, topTags, glmQLFTest
 import statsmodels
+import pertpy_diffexp
 
 
 def assign_neighbourhoods(
@@ -391,36 +392,44 @@ def filter_nhoods(mdata):
 from patsy import dmatrix
 def _return_null_df(adata):
     null_df = pd.DataFrame(index = adata.var_names)
-    null_df["log2FoldChange"] = np.nan
-    null_df["lfcSE"] = np.nan
+    null_df = null_df.reset_index(names = "variable")
+    null_df["log_fc"] = np.nan
     null_df["logCPM"] = np.nan
-    null_df["stat"] = np.nan
-    null_df["pvalue"] = np.nan
-    null_df["FDR"] = np.nan
+    null_df["F"] = np.nan
+    null_df["p_value"] = np.nan
+    null_df["adj_p_value"] = np.nan
     # null_df = null_df.reset_index(names = ["variable"])
     return null_df
 
-def _run_edger(pdata, design, group_to_compare):
+# def _run_edger(pdata, design, group_to_compare):
+#     try:
+#         # build a DGEList object
+#         genes = pdata.var
+#         n_genes = len(genes)
+#         n_samples = pdata.n_obs
+#         counts = pdata.X.T
+#         anno = pdata.obs
+#         # build the design matrix
+#         design = dmatrix(design, data=anno)
+#         for i, x in enumerate(design.design_info.column_names):
+#             if group_to_compare in x:
+#                 coef = i
+#         dge_list = DGEList(counts=counts, samples=anno, group = [1 for _ in range(n_samples)], genes=genes)
+#         # estimate the dispersions
+#         dge_list.estimateGLMCommonDisp(design=design)
+#         fit = dge_list.glmQLFit(design=design)
+#         qlf = glmQLFTest(fit)
+#         res = pd.DataFrame((topTags(qlf, n = n_genes).table))
+#         res = res.drop(["ENSEMBL", "SYMBOL"], axis = 1)
+#         res["FDR"] = statsmodels.stats.multitest.fdrcorrection(np.array(pd.DataFrame(res).pvalue))[1]
+#         return res
+#     except:
+#         return _return_null_df(pdata)
+def _run_edger(pdata, design, contrast, model):
     try:
-        # build a DGEList object
-        genes = pdata.var
-        n_genes = len(genes)
-        n_samples = pdata.n_obs
-        counts = pdata.X.T
-        anno = pdata.obs
-        # build the design matrix
-        design = dmatrix(design, data=anno)
-        for i, x in enumerate(design.design_info.column_names):
-            if group_to_compare in x:
-                coef = i
-        dge_list = DGEList(counts=counts, samples=anno, group = [1 for _ in range(n_samples)], genes=genes)
-        # estimate the dispersions
-        dge_list.estimateGLMCommonDisp(design=design)
-        fit = dge_list.glmQLFit(design=design)
-        qlf = glmQLFTest(fit)
-        res = pd.DataFrame((topTags(qlf, n = n_genes).table))
-        res = res.drop(["ENSEMBL", "SYMBOL"], axis = 1)
-        res["FDR"] = statsmodels.stats.multitest.fdrcorrection(np.array(pd.DataFrame(res).pvalue))[1]
+        mod = model(pdata, design)
+        mod.fit()
+        res = mod._test_single_contrast(**contrast)
         return res
     except:
         return _return_null_df(pdata)
@@ -453,12 +462,15 @@ def de_stat_neighbourhoods(
     sample_col = "patient",
     design = "~condition",
     covariates = ["condition"],
-    group_to_compare = "stim",
+    contrast = None,
+    model = pertpy_diffexp.EdgeR,
     # subset_nhoods = stat_auc$Nhood[!is.na(stat_auc$auc)],
     n_jobs = 1,
     layer = "counts",
 ):
-    print(group_to_compare)
+    assert contrast is not None
+
+    
     def get_cells_in_nhoods(mdata, nhood_ids):
         '''
         Get cells in neighbourhoods of interest '''
@@ -503,14 +515,15 @@ def de_stat_neighbourhoods(
     args = zip(
         aggregated_nhoods, 
         repeat(design),
-        repeat(group_to_compare)
+        repeat(contrast),
+        repeat(model)
     )
 
     from multiprocessing import Pool
     start = time.time()
     print(__name__)
-    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, group_to_compare) 
-                                                             for ad, design, group_to_compare in tqdm(args))
+    pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
+                                                             for ad, design, contrast, model in tqdm(args))
 
     # from multiprocessing import get_context
     # with get_context("spawn").Pool() as pool:
