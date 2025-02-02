@@ -538,7 +538,7 @@ def de_stat_neighbourhoods(
     print("start multiprocessing")
     from multiprocessing import get_context
     with get_context("spawn").Pool(n_jobs) as pool:
-        pval_df_list = pool.starmap(_run_edger_cached, tqdm(args))
+        pval_df_list = pool.starmap(_run_edger_cached, args)
     gene_order = mdata["rna"].var_names
     pval_by_nhood = pd.concat([df.set_index("variable").loc[gene_order, :][["p_value"]] for df in pval_df_list], axis = 1)
     FDR_across_genes = pd.concat([df.set_index("variable").loc[gene_order, :][["adj_p_value"]] for df in pval_df_list], axis = 1)
