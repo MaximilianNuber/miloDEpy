@@ -390,16 +390,16 @@ def filter_nhoods(mdata):
 
 
 from patsy import dmatrix
-def _return_null_df(adata):
-    null_df = pd.DataFrame(index = adata.var_names)
-    null_df = null_df.reset_index(names = "variable")
-    null_df["log_fc"] = np.nan
-    null_df["logCPM"] = np.nan
-    null_df["F"] = np.nan
-    null_df["p_value"] = np.nan
-    null_df["adj_p_value"] = np.nan
-    # null_df = null_df.reset_index(names = ["variable"])
-    return null_df
+# def _return_null_df(adata):
+#     null_df = pd.DataFrame(index = adata.var_names)
+#     null_df = null_df.reset_index(names = "variable")
+#     null_df["log_fc"] = np.nan
+#     null_df["logCPM"] = np.nan
+#     null_df["F"] = np.nan
+#     null_df["p_value"] = np.nan
+#     null_df["adj_p_value"] = np.nan
+#     # null_df = null_df.reset_index(names = ["variable"])
+#     return null_df
 
 # def _run_edger(pdata, design, group_to_compare):
 #     try:
@@ -457,6 +457,49 @@ def get_weights(nhoods_x):
     t_connect = np.sum(intersect_mat, axis=1)
     weights = 1 / t_connect
     return weights
+from pydeseq2.dds import DeseqDataSet, DefaultInference
+from pydeseq2.ds import DeseqStats
+def _run_pydeseq2(pdata, design, contrast, nhood_index):
+    try:
+        inference = DefaultInference(n_cpus=1, joblib_verbosity = 0)
+        dds = DeseqDataSet(
+            adata=pdata,
+            design = design,
+            refit_cooks=True,
+            inference=inference,
+            quiet = True
+        )
+        dds.deseq2()
+        stat_res = DeseqStats(
+            dds,
+            contrast=contrast,
+            inference=inference,
+            quiet = True
+        )
+        stat_res.summary()
+        res = stat_res.results_df.copy()
+        
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = pdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = res[["pvalue"]],
+                fdr_genes = res[["padj"]],
+                logFC = res[["log2FoldChange"]]
+            )
+        )
+    except:
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = pdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+                fdr_genes = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+                logFC = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names)
+            )
+        )
+    
+
 
 from itertools import repeat
 from joblib import Parallel, delayed
@@ -471,6 +514,7 @@ def de_stat_neighbourhoods(
     n_jobs = 1,
     layer = "counts",
 ):
+    print(mdata["rna"].obs[covariates[0]])
     # print("cache function")
     assert contrast is not None
 
@@ -520,35 +564,37 @@ def de_stat_neighbourhoods(
         aggregated_nhoods, 
         repeat(design),
         repeat(contrast),
-        repeat(model)
+        range(n_nhoods)
     )
 
-    dirpath = tempfile.mkdtemp()
-    memory = Memory(dirpath, verbose = 0)
-    _run_edger_cached = memory.cache(_run_edger)
+    #dirpath = tempfile.mkdtemp()
+    #memory = Memory(dirpath, verbose = 0)
+    # _run_edger_cached = memory.cache(_run_edger)
 
     # from multiprocessing import Pool
     start = time.time()
     
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
+    res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_pydeseq2)(ad, design, contrast, nhood_index) 
+                                                             for ad, design, contrast, nhood_index in tqdm(args))
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger_cached)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
 
-    print("start multiprocessing")
-    from multiprocessing import get_context
-    with get_context("spawn").Pool(n_jobs) as pool:
-        pval_df_list = pool.starmap(_run_edger_cached, args)
-    gene_order = mdata["rna"].var_names
-    pval_by_nhood = pd.concat([df.set_index("variable").loc[gene_order, :][["p_value"]] for df in pval_df_list], axis = 1)
-    FDR_across_genes = pd.concat([df.set_index("variable").loc[gene_order, :][["adj_p_value"]] for df in pval_df_list], axis = 1)
-    logfc_nhoods = pd.concat([df.set_index("variable").loc[gene_order, :][["log_fc"]] for df in pval_df_list], axis = 1)
+    # print("start multiprocessing")
+    # from multiprocessing import get_context
+    # with get_context("spawn").Pool(n_jobs) as pool:
+    #     pval_df_list = pool.starmap(_run_edger_cached, args)
+    # gene_order = mdata["rna"].var_names
+    # pval_by_nhood = pd.concat([df.set_index("variable").loc[gene_order, :][["p_value"]] for df in pval_df_list], axis = 1)
+    # FDR_across_genes = pd.concat([df.set_index("variable").loc[gene_order, :][["adj_p_value"]] for df in pval_df_list], axis = 1)
+    # logfc_nhoods = pd.concat([df.set_index("variable").loc[gene_order, :][["log_fc"]] for df in pval_df_list], axis = 1)
 
     end = time.time()
     print("edger done in")
     print(end-start)
     print("seconds")
-    return logfc_nhoods, pval_by_nhood, FDR_across_genes
+    return res_list
     # return pval_df_list
     # return pval_df_list
 
