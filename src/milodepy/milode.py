@@ -425,14 +425,30 @@ from patsy import dmatrix
 #         return res
 #     except:
 #         return _return_null_df(pdata)
-def _run_edger(pdata, design, contrast, model):
+def _run_edger(pdata, design, contrast, model, nhood_index):
     try:
         mod = model(pdata, design)
         mod.fit()
         res = mod._test_single_contrast(mod.contrast(**contrast))
-        return res
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = pdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = res[["p_value"]],
+                fdr_genes = res[["adj_p_value"]],
+                logFC = res[["log_fc"]]
+            )
+        )
     except:
-        return _return_null_df(pdata)
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = pdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+                fdr_genes = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+                logFC = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names)
+            )
+        )
     
 from joblib import Memory
 import tempfile
@@ -500,6 +516,13 @@ def _run_pydeseq2(pdata, design, contrast, nhood_index):
         )
     
 
+from itertools import islice
+
+
+def chunk(arr_range, arr_size):
+    arr_range = iter(arr_range)
+    return iter(lambda: tuple(islice(arr_range, arr_size)), ())
+
 
 from itertools import repeat
 from joblib import Parallel, delayed
@@ -512,6 +535,7 @@ def de_stat_neighbourhoods(
     model = pertpy_diffexp.EdgeR,
     # subset_nhoods = stat_auc$Nhood[!is.na(stat_auc$auc)],
     n_jobs = 1,
+    chunk_size = 48,
     layer = "counts",
 ):
     print(mdata["rna"].obs[covariates[0]])
@@ -564,6 +588,7 @@ def de_stat_neighbourhoods(
         aggregated_nhoods, 
         repeat(design),
         repeat(contrast),
+        repeat(model),
         range(n_nhoods)
     )
 
@@ -573,11 +598,30 @@ def de_stat_neighbourhoods(
 
     # from multiprocessing import Pool
     start = time.time()
+
+    assert chunk_size > n_jobs
+
+    all_chunks = chunk(args, chunk_size)
+
+    start_ad = anndata.AnnData(
+                obs = pd.DataFrame(index = mdata["rna"].var_names),
+                var = pd.DataFrame(index = [str("start")]),
+                layers = dict(
+                    pvalue = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
+                    fdr_genes = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
+                    logFC = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names)
+                )
+    )
+
+    for cur_chunk in tqdm(all_chunks):
+        res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model, nhood_index) 
+                                                             for ad, design, contrast, model, nhood_index in tqdm(cur_chunk))
+        start_ad = sc.concat([start_ad]+res_list, axis = 1)
     
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
-    res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_pydeseq2)(ad, design, contrast, nhood_index) 
-                                                             for ad, design, contrast, nhood_index in tqdm(args))
+    # res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_pydeseq2)(ad, design, contrast, nhood_index) 
+    #                                                          for ad, design, contrast, nhood_index in tqdm(args))
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger_cached)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
 
@@ -594,7 +638,7 @@ def de_stat_neighbourhoods(
     print("edger done in")
     print(end-start)
     print("seconds")
-    return res_list
+    return start_ad
     # return pval_df_list
     # return pval_df_list
 
