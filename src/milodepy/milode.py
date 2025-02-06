@@ -53,6 +53,7 @@ milo = pt.tl.Milo()
 # from patsy import dmatrix
 # from inmoose.edgepy import DGEList, glmLRT, topTags, glmQLFTest
 import statsmodels
+import statsmodels.api as sm
 import pertpy_diffexp
 
 
