@@ -515,6 +515,38 @@ def _run_pydeseq2(pdata, design, contrast, nhood_index):
             )
         )
     
+import decoupler as dc
+def _run_nb(pdata, design, contrast, min_count, nhood_index):
+    offset = np.log(np.asarray(pdata.X.sum(1)).ravel())
+    
+    genes = dc.filter_by_expr(pdata, group="milo_sample_id", min_count = int(min_count), min_total_count=round(3*1.5)
+                             )
+    ctdata = pdata[:, genes].copy()
+    
+    try:
+        
+        mod = pt.tl.Statsmodels(ctdata, design)
+        mod.fit(sm.GLM, family = sm.families.NegativeBinomial(), offset = offset)
+        res = mod._test_single_contrast(mod.contrast(**contrast))
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = ctdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = res[["p_value"]],
+                fdr_genes = res[["adj_p_value"]],
+                logFC = res[["log_fc"]]
+            )
+        )
+    except:
+        return anndata.AnnData(
+            obs = pd.DataFrame(index = ctdata.var_names),
+            var = pd.DataFrame(index = [str(nhood_index)]),
+            layers = dict(
+                pvalue = pd.DataFrame(data = {str(nhood_index): np.nan}, index = ctdata.var_names),
+                fdr_genes = pd.DataFrame(data = {str(nhood_index): np.nan}, index = ctdata.var_names),
+                logFC = pd.DataFrame(data = {str(nhood_index): np.nan}, index = ctdata.var_names)
+            )
+        )
 
 from itertools import islice
 
@@ -532,8 +564,9 @@ def de_stat_neighbourhoods(
     design = "~condition",
     covariates = ["condition"],
     contrast = None,
-    model = pertpy_diffexp.EdgeR,
+    # model = pertpy_diffexp.EdgeR,
     # subset_nhoods = stat_auc$Nhood[!is.na(stat_auc$auc)],
+    min_count = 3,
     n_jobs = 1,
     chunk_size = 48,
     layer = "counts",
@@ -560,7 +593,7 @@ def de_stat_neighbourhoods(
 
     func = "sum"
     # layer = "counts"
-    
+    mdata["rna"].obs["milo_sample_id"] = mdata["rna"].obs[sample_col].copy()
     all_nhoods = (get_cells_in_nhoods(mdata, nhood_ids = np.asarray([i])) for i in range(n_nhoods))
     aggregated_nhoods = (
         sc.get.aggregate(ad, by = [sample_col] + covs, func = func, layer=layer)
@@ -588,7 +621,7 @@ def de_stat_neighbourhoods(
         aggregated_nhoods, 
         repeat(design),
         repeat(contrast),
-        repeat(model),
+        repeat(min_count),
         range(n_nhoods)
     )
 
@@ -614,8 +647,8 @@ def de_stat_neighbourhoods(
     )
 
     for cur_chunk in tqdm(all_chunks):
-        res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model, nhood_index) 
-                                                             for ad, design, contrast, model, nhood_index in tqdm(cur_chunk))
+        res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, min_count, nhood_index) 
+                                                             for ad, design, contrast, min_count, nhood_index in tqdm(cur_chunk))
         start_ad = sc.concat([start_ad]+res_list, axis = 1)
     
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
