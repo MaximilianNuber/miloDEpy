@@ -529,6 +529,7 @@ def _run_nb(pdata, design, contrast, min_count, nhood_index):
         mod = pt.tl.Statsmodels(ctdata, design)
         mod.fit(sm.GLM, family = sm.families.NegativeBinomial(), offset = offset)
         res = mod._test_single_contrast(mod.contrast(**contrast))
+        res["p_value"] = res.p_value.astype(float)
         return anndata.AnnData(
             obs = pd.DataFrame(index = ctdata.var_names),
             var = pd.DataFrame(index = [str(nhood_index)]),
