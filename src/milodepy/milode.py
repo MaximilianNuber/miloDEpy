@@ -391,16 +391,16 @@ def filter_nhoods(mdata):
 
 
 from patsy import dmatrix
-# def _return_null_df(adata):
-#     null_df = pd.DataFrame(index = adata.var_names)
-#     null_df = null_df.reset_index(names = "variable")
-#     null_df["log_fc"] = np.nan
-#     null_df["logCPM"] = np.nan
-#     null_df["F"] = np.nan
-#     null_df["p_value"] = np.nan
-#     null_df["adj_p_value"] = np.nan
-#     # null_df = null_df.reset_index(names = ["variable"])
-#     return null_df
+def _return_null_df(adata):
+    null_df = pd.DataFrame(index = adata.var_names)
+    null_df = null_df.reset_index(names = "variable")
+    null_df["log_fc"] = np.nan
+    null_df["logCPM"] = np.nan
+    null_df["F"] = np.nan
+    null_df["p_value"] = np.nan
+    null_df["adj_p_value"] = np.nan
+    # null_df = null_df.reset_index(names = ["variable"])
+    return null_df
 
 # def _run_edger(pdata, design, group_to_compare):
 #     try:
@@ -426,30 +426,56 @@ from patsy import dmatrix
 #         return res
 #     except:
 #         return _return_null_df(pdata)
+# def _run_edger(pdata, design, contrast, model, nhood_index):
+#     try:
+#         mod = model(pdata, design)
+#         mod.fit()
+#         res = mod._test_single_contrast(mod.contrast(**contrast))
+#         return anndata.AnnData(
+#             obs = pd.DataFrame(index = pdata.var_names),
+#             var = pd.DataFrame(index = [str(nhood_index)]),
+#             layers = dict(
+#                 pvalue = res[["p_value"]],
+#                 fdr_genes = res[["adj_p_value"]],
+#                 logFC = res[["log_fc"]]
+#             )
+#         )
+#     except:
+#         return anndata.AnnData(
+#             obs = pd.DataFrame(index = pdata.var_names),
+#             var = pd.DataFrame(index = [str(nhood_index)]),
+#             layers = dict(
+#                 pvalue = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+#                 fdr_genes = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
+#                 logFC = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names)
+#             )
+#         )
+
 def _run_edger(pdata, design, contrast, model, nhood_index):
+    # print("new1")
+    # from rpy2.robjects import numpy2ri, pandas2ri
+    from rpy2.robjects.packages import importr
+
+    # numpy2ri.activate()
+    # pandas2ri.activate()
+    rbase = importr("base")
     try:
         mod = model(pdata, design)
         mod.fit()
         res = mod._test_single_contrast(mod.contrast(**contrast))
-        return anndata.AnnData(
-            obs = pd.DataFrame(index = pdata.var_names),
-            var = pd.DataFrame(index = [str(nhood_index)]),
-            layers = dict(
-                pvalue = res[["p_value"]],
-                fdr_genes = res[["adj_p_value"]],
-                logFC = res[["log_fc"]]
-            )
-        )
+        res["p_value"] = res["p_value"].astype(float)
+        res["Nhood"] = nhood_index
+        res["tested"] = True
+        pid = rbase.Sys_getpid()
+        res["pid"] = _r_to_py(pid)[0]
+        return res
     except:
-        return anndata.AnnData(
-            obs = pd.DataFrame(index = pdata.var_names),
-            var = pd.DataFrame(index = [str(nhood_index)]),
-            layers = dict(
-                pvalue = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
-                fdr_genes = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names),
-                logFC = pd.DataFrame(data = {str(nhood_index): np.nan}, index = pdata.var_names)
-            )
-        )
+        res = _return_null_df(pdata)
+        res["Nhood"] = nhood_index
+        res["tested"] = False
+        pid = rbase.Sys_getpid()
+        res["pid"] = _r_to_py(pid)[0]
+        return res
     
 from joblib import Memory
 import tempfile
@@ -560,6 +586,10 @@ def chunk(arr_range, arr_size):
 
 from itertools import repeat
 from joblib import Parallel, delayed
+
+import warnings
+warnings.filterwarnings("ignore")
+
 def de_stat_neighbourhoods(
     mdata,
     sample_col = "patient",
@@ -570,10 +600,11 @@ def de_stat_neighbourhoods(
     # subset_nhoods = stat_auc$Nhood[!is.na(stat_auc$auc)],
     min_count = 3,
     n_jobs = 1,
-    chunk_size = 48,
+    # chunk_size = 48,
+    model = pertpy_diffexp.EdgeR,
     layer = "counts",
 ):
-    print(mdata["rna"].obs[covariates[0]])
+    # print(mdata["rna"].obs[covariates[0]])
     # print("cache function")
     assert contrast is not None
 
@@ -623,7 +654,8 @@ def de_stat_neighbourhoods(
         aggregated_nhoods, 
         repeat(design),
         repeat(contrast),
-        repeat(min_count),
+        repeat(model),
+        # repeat(min_count),
         range(n_nhoods)
     )
 
@@ -634,24 +666,29 @@ def de_stat_neighbourhoods(
     # from multiprocessing import Pool
     start = time.time()
 
-    assert chunk_size > n_jobs
+    # assert chunk_size > n_jobs
 
-    all_chunks = chunk(args, chunk_size)
+    # all_chunks = chunk(args, chunk_size)
 
-    start_ad = anndata.AnnData(
-                obs = pd.DataFrame(index = mdata["rna"].var_names),
-                var = pd.DataFrame(index = [str("start")]),
-                layers = dict(
-                    pvalue = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
-                    fdr_genes = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
-                    logFC = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names)
-                )
-    )
+    # start_ad = anndata.AnnData(
+    #             obs = pd.DataFrame(index = mdata["rna"].var_names),
+    #             var = pd.DataFrame(index = [str("start")]),
+    #             layers = dict(
+    #                 pvalue = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
+    #                 fdr_genes = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names),
+    #                 logFC = pd.DataFrame(data = {str("start"): np.nan}, index = mdata["rna"].var_names)
+    #             )
+    # )
 
-    for cur_chunk in tqdm(all_chunks):
-        res_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, min_count, nhood_index) 
-                                                             for ad, design, contrast, min_count, nhood_index in tqdm(cur_chunk))
-        start_ad = sc.concat([start_ad]+res_list, axis = 1)
+    res_df = pd.DataFrame()
+    # for cur_chunk in tqdm(all_chunks):
+    res_list = Parallel(n_jobs=n_jobs, backend = "loky", return_as = "generator_unordered")(delayed(_run_edger)(ad, design, contrast, model, nhood_index) 
+            for ad, design, contrast, model, nhood_index in tqdm(args))
+    
+    for df in res_list:
+        res_df = pd.concat([res_df, df], axis = 0)
+    
+    return res_df
     
     # pval_df_list = Parallel(n_jobs=n_jobs, backend = "loky")(delayed(_run_edger)(ad, design, contrast, model) 
     #                                                          for ad, design, contrast, model in tqdm(args))
